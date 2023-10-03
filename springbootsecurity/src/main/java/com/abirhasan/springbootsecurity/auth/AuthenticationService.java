@@ -2,6 +2,9 @@ package com.abirhasan.springbootsecurity.auth;
 
 import com.abirhasan.springbootsecurity.config.JwtService;
 import com.abirhasan.springbootsecurity.repository.UserRepository;
+import com.abirhasan.springbootsecurity.token.Token;
+import com.abirhasan.springbootsecurity.token.TokenRepository;
+import com.abirhasan.springbootsecurity.token.TokenType;
 import com.abirhasan.springbootsecurity.user.Role;
 import com.abirhasan.springbootsecurity.user.User;
 import lombok.RequiredArgsConstructor;
@@ -14,9 +17,11 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class AuthenticationService {
     private final UserRepository repository;
+    private final TokenRepository tokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
+
     public AuthenticationResponse register(RegisterRequest request){
         var user = User.builder()
                 .firstname(request.getFirstname())
@@ -25,12 +30,15 @@ public class AuthenticationService {
                 .password(passwordEncoder.encode(request.getPassword()))
                 .role(Role.USER)
                 .build();
-        repository.save(user);
+        var userSaved = repository.save(user);
         var jwtToken = jwtService.generateToken(user);
+
+        saveUserToken(userSaved, jwtToken);
 
         return AuthenticationResponse
                 .builder()
                 .token(jwtToken)
+                .username(user.getUsername())
                 .build();
     }
 
@@ -38,10 +46,38 @@ public class AuthenticationService {
         authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword()));
         var user = repository.findByEmail(request.getEmail()).orElseThrow();
         var jwtToken = jwtService.generateToken(user);
+        revokeAllUserTokens(user);
+        saveUserToken(user, jwtToken);
         return AuthenticationResponse
                 .builder()
                 .token(jwtToken)
+                .username(user.getUsername())
                 .build();
     }
+
+    private void revokeAllUserTokens(User user){
+        var validUserTokens = tokenRepository.findAllValidTokenByUser(user.getId());
+        if (validUserTokens.isEmpty())
+            return;
+
+        validUserTokens.forEach(t ->{
+            t.setExpired(true);
+            t.setRevoked(true);
+        });
+        tokenRepository.saveAll(validUserTokens);
+    }
+
+    private void saveUserToken(User user, String jwtToken) {
+        var token = Token.builder()
+                .user(user)
+                .token(jwtToken)
+                .tokenType(TokenType.BEARER)
+                .expired(false)
+                .revoked(false)
+                .build();
+        tokenRepository.save(token);
+    }
+
+
 }
 
